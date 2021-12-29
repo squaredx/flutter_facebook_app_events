@@ -3,10 +3,12 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
-const channelName = 'flutter.oddbit.id/facebook_app_events';
+const channelName = 'flutter.oddbit.id/facebook_app_events/methods';
+const eventChannelName = 'flutter.oddbit.id/facebook_app_events/events';
 
 class FacebookAppEvents {
-  static const _channel = MethodChannel(channelName);
+  static const MethodChannel _channel = MethodChannel(channelName);
+  static const EventChannel _eventChannel = EventChannel(eventChannelName);
 
   // See: https://github.com/facebook/facebook-android-sdk/blob/master/facebook-core/src/main/java/com/facebook/appevents/AppEventsConstants.java
   static const eventNameCompletedRegistration =
@@ -44,6 +46,20 @@ class FacebookAppEvents {
   /// Parameter key used to specify an ID for the specific piece of content being logged about.
   /// This could be an EAN, article identifier, etc., depending on the nature of the app.
   static const paramNameContentId = "fb_content_id";
+
+  Stream<String>? _onDeepLinkEvent;
+
+  Stream<String>? get onDeepLinkEvent {
+    if (_onDeepLinkEvent == null) {
+      _onDeepLinkEvent = _eventChannel.receiveBroadcastStream().cast<String>();
+    }
+    return _onDeepLinkEvent;
+  }
+
+  Future<String?> getDeepLinkUrl() async {
+    final String? url = await _channel.invokeMethod('getDeepLinkUrl');
+    return url;
+  }
 
   /// Clears the current user data
   Future<void> clearUserData() {

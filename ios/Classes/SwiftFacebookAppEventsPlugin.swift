@@ -4,21 +4,74 @@ import FBSDKCoreKit
 import FBSDKCoreKit_Basics
 import FBAudienceNetwork
 
-public class SwiftFacebookAppEventsPlugin: NSObject, FlutterPlugin {
+public class SwiftFacebookAppEventsPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
+    
+    var _eventSink: FlutterEventSink?
+    var _deepLinkUrl: String = ""
+    var _queuedLinks = [String]()
+    
+    public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        _eventSink = events
+        _queuedLinks.forEach({ events($0) })
+        _queuedLinks.removeAll()
+        return nil
+    }
+    
+    public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        _eventSink = nil
+        return nil
+    }
+    
     public static func register(with registrar: FlutterPluginRegistrar) {
-        let channel = FlutterMethodChannel(name: "flutter.oddbit.id/facebook_app_events", binaryMessenger: registrar.messenger())
+        let channel = FlutterMethodChannel(name: "flutter.oddbit.id/facebook_app_events/methods", binaryMessenger: registrar.messenger())
+        
+        let eventChannel = FlutterEventChannel(name: "flutter.oddbit.id/facebook_app_events/events", binaryMessenger: registrar.messenger())
+        
         let instance = SwiftFacebookAppEventsPlugin()
+        
+        eventChannel.setStreamHandler(instance)
 
         // Required for FB SDK 9.0, as it does not initialize the SDK automatically any more.
         // See: https://developers.facebook.com/blog/post/2021/01/19/introducing-facebook-platform-sdk-version-9/
         // "Removal of Auto Initialization of SDK" section
         ApplicationDelegate.shared.initializeSDK()
 
+        registrar.addApplicationDelegate(instance)
         registrar.addMethodCallDelegate(instance, channel: channel)
+    }
+    
+
+    public func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [AnyHashable : Any] = [:]) -> Bool {
+        let launchOptionsForFacebook = launchOptions as? [UIApplication.LaunchOptionsKey: Any]
+        ApplicationDelegate.shared.application(
+            application,
+            didFinishLaunchingWithOptions:
+                launchOptionsForFacebook
+        )
+        AppLinkUtility.fetchDeferredAppLink{ (url, error) in
+            if let error = error {
+                print("Error %a", error)
+            }
+            if let url = url {
+                self._deepLinkUrl = url.absoluteString
+                self.sendMessageToStream(link: self._deepLinkUrl)
+            }
+            
+        }
+        return true
+    }
+    
+    public func application(_ application: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
+        self._deepLinkUrl = url.absoluteString
+        self.sendMessageToStream(link: self._deepLinkUrl)
+        return ApplicationDelegate.shared.application(application, open: url, sourceApplication: options[UIApplication.OpenURLOptionsKey.sourceApplication] as? String, annotation: options[UIApplication.OpenURLOptionsKey.annotation])
     }
 
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
+        case "getDeepLinkUrl":
+            handleGetDeepLinkUrl(call, result: result)
+            break;
         case "clearUserData":
             handleClearUserData(call, result: result)
             break
@@ -58,6 +111,18 @@ public class SwiftFacebookAppEventsPlugin: NSObject, FlutterPlugin {
         default:
             result(FlutterMethodNotImplemented)
         }
+    }
+    
+    func sendMessageToStream(link: String) {
+        guard let eventSink = _eventSink else {
+            _queuedLinks.append(link)
+            return
+        }
+        eventSink(link);
+    }
+    
+    private func handleGetDeepLinkUrl(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        result(_deepLinkUrl);
     }
 
     private func handleClearUserData(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
