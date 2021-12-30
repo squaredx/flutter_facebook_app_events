@@ -2,18 +2,23 @@ package id.oddbit.flutter.facebook_app_events
 
 import androidx.annotation.NonNull
 
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import bolts.AppLinks
 import com.facebook.FacebookSdk
 import com.facebook.appevents.AppEventsLogger
 import com.facebook.applinks.AppLinkData
 import com.facebook.GraphRequest
 import com.facebook.GraphResponse
 import io.flutter.embedding.engine.plugins.FlutterPlugin
-import io.flutter.plugin.common.MethodCall
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.EventChannel.EventSink
 import io.flutter.plugin.common.EventChannel.StreamHandler
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
@@ -22,7 +27,7 @@ import io.flutter.plugin.common.PluginRegistry.Registrar
 import java.util.Currency
 
 /** FacebookAppEventsPlugin */
-class FacebookAppEventsPlugin: FlutterPlugin, MethodCallHandler, StreamHandler, PluginRegistry.NewIntentListener {
+class FacebookAppEventsPlugin: FlutterPlugin, MethodCallHandler, StreamHandler, ActivityAware, PluginRegistry.NewIntentListener {
   /// The MethodChannel that will the communication between Flutter and native Android
   ///
   /// This local reference serves to register the plugin with the Flutter Engine and unregister it
@@ -34,8 +39,11 @@ class FacebookAppEventsPlugin: FlutterPlugin, MethodCallHandler, StreamHandler, 
 
   private val logTag = "FacebookAppEvents"
 
-  private val deepLinkUrl: String = ""
-  private val queuedLinks = List<string> = emptyList()
+  private var deepLinkUrl: String = ""
+  private var queuedLinks: List<String> = emptyList()
+  private var eventSink: EventSink? = null
+  private var context: Context? = null
+  private var activityPluginBinding: ActivityPluginBinding? = null
 
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter.oddbit.id/facebook_app_events/methods")
@@ -44,12 +52,17 @@ class FacebookAppEventsPlugin: FlutterPlugin, MethodCallHandler, StreamHandler, 
     eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "flutter.oddbit.id/facebook_app_events/events")
     eventChannel.setStreamHandler(this)
 
-    appEventsLogger = AppEventsLogger.newLogger(flutterPluginBinding.applicationContext)
-    anonymousId = AppEventsLogger.getAnonymousAppDeviceGUID(flutterPluginBinding.applicationContext)
+    context = flutterPluginBinding.applicationContext
+
+    appEventsLogger = AppEventsLogger.newLogger(context!!)
+    anonymousId = AppEventsLogger.getAnonymousAppDeviceGUID(context!!)
+
+    setupDeeplink()
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
     channel.setMethodCallHandler(null)
+    eventChannel.setStreamHandler(null)
   }
 
   override fun onNewIntent(intent: Intent?): Boolean {
@@ -67,7 +80,7 @@ class FacebookAppEventsPlugin: FlutterPlugin, MethodCallHandler, StreamHandler, 
   }
 
   override fun onCancel(arguments: Any?) {
-      eventSink = null
+    eventSink = null
   }
 
   override fun onMethodCall(call: MethodCall, result: Result) {
@@ -88,6 +101,47 @@ class FacebookAppEventsPlugin: FlutterPlugin, MethodCallHandler, StreamHandler, 
 
       else -> result.notImplemented()
     }
+  }
+
+  override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+    activityPluginBinding!!.removeOnNewIntentListener(this);
+    activityPluginBinding = binding;
+    binding.addOnNewIntentListener(this);
+  }
+
+  override fun onDetachedFromActivity() {
+  }
+
+  override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+    activityPluginBinding = binding
+    binding.addOnNewIntentListener(this)
+
+    FacebookSdk.setAutoInitEnabled(true)
+    FacebookSdk.fullyInitialize()
+    appEventsLogger = AppEventsLogger.newLogger(context!!)
+
+    setupDeeplink()
+  }
+
+  override fun onDetachedFromActivityForConfigChanges() {
+  }
+
+  private fun setupDeeplink() {
+    val targetUri = AppLinks.getTargetUrlFromInboundIntent(context, activityPluginBinding!!.activity.intent)
+    AppLinkData.fetchDeferredAppLinkData(context, object : AppLinkData.CompletionHandler {
+      override fun onDeferredAppLinkDataFetched(appLinkData: AppLinkData?) {
+
+        if (appLinkData == null) {
+          return;
+        }
+
+        deepLinkUrl = appLinkData.targetUri.toString();
+        if (eventSink != null && deepLinkUrl != null) {
+          eventSink!!.success(deepLinkUrl)
+        }
+      }
+
+    })
   }
 
   private fun handleGetDeepLinkUrl(call: MethodCall, result: Result) {
